@@ -14,5 +14,5 @@
 - [x] Notebook at `notebooks/AeroMind_Travel_Copilot.ipynb`.
 - [x] Team page and contribution matrix in `docs/team.md`.
 - [x] SDAIA GitHub and submission-form links in README.
-- [ ] Create or select the personal GitHub repository.
-- [ ] Add the GitHub remote and push the initial commit.
+- [x] Create or select the personal GitHub repository.
+- [x] Add the GitHub remote and push the initial commit.
