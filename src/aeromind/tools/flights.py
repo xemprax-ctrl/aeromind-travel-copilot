@@ -8,6 +8,11 @@ AIRPORT_CODES = (
     "KWI", "JED", "MED", "BEY", "TUN", "JFK", "SIN", "BKK",
 )
 
+# Searchable airports include the Saudi departure hubs as well as the 15
+# advertised destinations.  Keeping AIRPORT_CODES stable preserves the public
+# destination catalogue while allowing a user to search in either direction.
+SEARCH_AIRPORT_CODES = tuple(dict.fromkeys(("RUH", "DMM", *AIRPORT_CODES)))
+
 DESTINATION_NAMES = {
     "london": "LHR", "lhr": "LHR", "lon": "LHR", "لندن": "LHR",
     "dubai": "DXB", "dxb": "DXB", "دبي": "DXB",
@@ -24,6 +29,8 @@ DESTINATION_NAMES = {
     "new york": "JFK", "jfk": "JFK", "nyc": "JFK", "نيويورك": "JFK",
     "singapore": "SIN", "sin": "SIN", "سنغافورة": "SIN",
     "bangkok": "BKK", "bkk": "BKK", "بانكوك": "BKK",
+    "riyadh": "RUH", "ruh": "RUH", "الرياض": "RUH",
+    "dammam": "DMM", "dmm": "DMM", "الدمام": "DMM",
 }
 
 AIRLINES = (
@@ -31,7 +38,7 @@ AIRLINES = (
     "flynas", "Gulf Air", "EgyptAir", "Turkish Airlines",
 )
 
-ORIGINS = ("RUH", "JED", "DMM", "MED", *AIRPORT_CODES)
+ORIGINS = SEARCH_AIRPORT_CODES
 REGIONAL_HUBS = {
     "Middle East": ("DOH", "DXB", "AMM"),
     "Europe": ("IST", "LHR", "CDG"),
@@ -56,7 +63,7 @@ def _build_mock_catalog() -> list[dict[str, Any]]:
     route_index = 0
 
     for origin in ORIGINS:
-        for destination in AIRPORT_CODES:
+        for destination in SEARCH_AIRPORT_CODES:
             if origin == destination:
                 continue
 
@@ -146,8 +153,8 @@ def calculate_total_cost(base_price_sar: float, extra_bags: int = 0) -> dict[str
         raise ValueError("Extra bags cannot be negative")
 
     tax = round(base_price_sar * 0.15, 2)
-    # 23 kg included in the first paid bag; later bags have a higher fee.
-    baggage_fee = 150.0 if extra_bags == 1 else round(extra_bags * 250.0, 2) if extra_bags > 1 else 0.0
+    # The first paid bag costs 150 SAR; each additional bag costs 250 SAR.
+    baggage_fee = 0.0 if extra_bags == 0 else round(150.0 + ((extra_bags - 1) * 250.0), 2)
     total = round(base_price_sar + tax + baggage_fee, 2)
     return {
         "tax_sar": tax,

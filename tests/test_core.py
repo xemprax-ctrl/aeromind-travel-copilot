@@ -1,7 +1,7 @@
 from aeromind.evaluation.benchmark import run_benchmark
 from aeromind.graph.workflow import AeroMindWorkflow
 from aeromind.security.guardrails import SecurityGuardrails
-from aeromind.tools.flights import AIRLINES, AIRPORT_CODES, MOCK_FLIGHTS, calculate_total_cost, search_and_price
+from aeromind.tools.flights import AIRLINES, AIRPORT_CODES, MOCK_FLIGHTS, SEARCH_AIRPORT_CODES, calculate_total_cost, search_and_price
 
 
 def test_mock_flights_and_costs():
@@ -47,6 +47,18 @@ def test_all_destination_pairs_have_at_least_one_option():
     assert not missing
 
 
+def test_all_selectable_airports_have_bidirectional_options():
+    import aeromind.tools.flights as flights
+
+    pairs = [
+        (origin, destination)
+        for origin in SEARCH_AIRPORT_CODES
+        for destination in SEARCH_AIRPORT_CODES
+        if origin != destination
+    ]
+    assert all(flights.search_and_price(origin, destination) for origin, destination in pairs)
+
+
 def test_stopover_option_exists():
     options = search_and_price("KWI", "JFK", extra_bags=2, direct_only=False, allow_stopovers=True, require_stopover=True)
     assert options
@@ -71,6 +83,41 @@ def test_baggage_fee_increases():
     two_bags = calculate_total_cost(1000.0, 2)["baggage_fee_sar"]
     three_bags = calculate_total_cost(1000.0, 3)["baggage_fee_sar"]
     assert one_bag < two_bags < three_bags
+    assert one_bag == 150.0
+    assert two_bags == 400.0
+
+
+def test_budget_selects_only_affordable_plan():
+    result = AeroMindWorkflow().run(
+        "budget test", origin="RUH", destination="DXB", budget=300, direct_only=False
+    )
+    assert result["terminal_reason"] == "NO_RESULTS"
+    assert result["selected_plan"] is None
+    assert "يتجاوز الميزانية" in result["final_response"]
+
+
+def test_flight_tool_failure_is_reported(monkeypatch):
+    import aeromind.graph.workflow as workflow_module
+
+    def fail_search(*args, **kwargs):
+        raise RuntimeError("simulated provider failure")
+
+    monkeypatch.setattr(workflow_module, "search_and_price", fail_search)
+    result = AeroMindWorkflow().run(
+        "tool failure test", origin="RUH", destination="DXB", budget=3000
+    )
+
+    assert result["terminal_reason"] == "TOOL_FAILURE"
+    assert "فشل" in result["final_response"]
+
+
+def test_masked_query_replaces_raw_state():
+    result = AeroMindWorkflow().run(
+        "رحلة إلى دبي، email user@example.com ورقم 0500000000",
+        origin="RUH", destination="DXB", budget=3000,
+    )
+    assert "user@example.com" not in result["user_query"]
+    assert "0500000000" not in result["user_query"]
 
 
 def test_catalog_size_and_airlines():

@@ -44,6 +44,7 @@ def initial_state(
         "direct_only": direct_only if direct_only is not None else False,
         "allow_stopovers": allow_stopovers if allow_stopovers is not None else True,
         "require_stopover": require_stopover if require_stopover is not None else False,
+        "research_context": [],
         "candidate_flights": [],
         "selected_plan": None,
         "critique_feedback": "",
@@ -66,7 +67,11 @@ def security_node(state: TravelState, logger: ObservabilityLogger) -> TravelStat
         return state
 
     state["sanitized_query"] = SecurityGuardrails.mask_pii(state["user_query"])
-    finish("SUCCESS", {"pii_masked": state["sanitized_query"] != state["user_query"]})
+    pii_masked = state["sanitized_query"] != state["user_query"]
+    # Keep the original input only long enough to validate it; downstream
+    # nodes and logs operate on the PII-masked copy.
+    state["user_query"] = state["sanitized_query"]
+    finish("SUCCESS", {"pii_masked": pii_masked})
     return state
 
 
@@ -84,7 +89,10 @@ def planner_node(state: TravelState, logger: ObservabilityLogger, settings: Sett
             "direct_only": state["direct_only"],
             "extra_bags": state["extra_bags"],
         })
-        if (state["origin"], state["destination"]) not in SUPPORTED_ROUTES:
+        if state["origin"] == state["destination"]:
+            state["error_message"] = "يجب أن تختلف نقطة الانطلاق عن الوجهة."
+            state["terminal_reason"] = "INVALID_INPUT"
+        elif (state["origin"], state["destination"]) not in SUPPORTED_ROUTES:
             state["error_message"] = "الوجهة أو نقطة الانطلاق غير مدعومة في قاعدة الرحلات المحاكاة."
             state["terminal_reason"] = "INVALID_INPUT"
         return state
@@ -169,8 +177,13 @@ def research_node(state: TravelState, logger: ObservabilityLogger, settings: Set
     finish = logger.timed(trace_id, "Travel Research Agent", "research_supporting_context")
     query = f"Travel requirements, baggage policy and current advisories for {state['origin']} to {state['destination']}"
     result = research_travel_topic(query, settings)
-    state["critique_feedback"] = "Tavily disabled or no supporting context was available." if not result.get("enabled") else "Supporting context retrieved."
-    finish("SUCCESS" if result.get("enabled") else "SKIPPED", {"result_count": len(result.get("results", []))})
+    state["research_context"] = result.get("results", [])[:5]
+    if result.get("error"):
+        state["critique_feedback"] = "تعذر جلب السياق الخارجي؛ استمر البحث ببيانات الرحلات المحاكاة."
+        finish("ERROR", {"result_count": 0, "error": result["error"]})
+    else:
+        state["critique_feedback"] = "Tavily disabled or no supporting context was available." if not result.get("enabled") else "Supporting context retrieved."
+        finish("SUCCESS" if result.get("enabled") else "SKIPPED", {"result_count": len(result.get("results", []))})
     return state
 
 
@@ -192,13 +205,19 @@ def worker_node(state: TravelState, logger: ObservabilityLogger, settings: Setti
             state.get("require_stopover", False),
         )
     except Exception as exc:
+        state["candidate_flights"] = []
+        state["selected_plan"] = None
         state["error_message"] = "فشل في تشغيل أداة البحث والتسعير."
         state["terminal_reason"] = "TOOL_FAILURE"
         finish("ERROR", {"error": type(exc).__name__})
         return state
 
     state["candidate_flights"] = options
-    state["selected_plan"] = options[0] if options else None
+    affordable = [option for option in options if option["total_price_sar"] <= state["max_budget"]]
+    state["selected_plan"] = affordable[0] if affordable else None
+    if options and not affordable:
+        state["terminal_reason"] = "NO_RESULTS"
+        state["critique_feedback"] = "توجد رحلات، لكن أرخص خيار يتجاوز الميزانية المحددة."
     finish("SUCCESS", {"candidate_count": len(options), "selected": state["selected_plan"]})
     return state
 
@@ -210,9 +229,13 @@ def reviewer_node(state: TravelState, logger: ObservabilityLogger, settings: Set
 
     if not plan:
         state["is_approved"] = False
-        state["terminal_reason"] = "NO_RESULTS"
-        state["critique_feedback"] = "لم يتم العثور على رحلة تطابق القيود الحالية."
-        finish("REJECTED", {"reason": "NO_RESULTS"})
+        if state.get("terminal_reason") not in {"NO_RESULTS", "TOOL_FAILURE"}:
+            state["terminal_reason"] = "NO_RESULTS"
+            state["critique_feedback"] = "لم يتم العثور على رحلة تطابق القيود الحالية."
+        finish(
+            "ERROR" if state.get("terminal_reason") == "TOOL_FAILURE" else "REJECTED",
+            {"reason": state.get("terminal_reason", "NO_RESULTS")},
+        )
         return state
 
     valid_output, output_message = SecurityGuardrails.validate_output(plan, state["max_budget"])
@@ -248,7 +271,7 @@ def finalizer_node(state: TravelState, logger: ObservabilityLogger) -> TravelSta
     elif state.get("terminal_reason") == "INVALID_INPUT":
         state["final_response"] = state.get("error_message") or "البيانات المدخلة غير صالحة."
     elif state.get("terminal_reason") == "NO_RESULTS":
-        state["final_response"] = "تعذر العثور على رحلة مطابقة للقيود المحددة."
+        state["final_response"] = state.get("critique_feedback") or "تعذر العثور على رحلة مطابقة للقيود المحددة."
     elif state.get("terminal_reason") == "TOOL_FAILURE":
         state["final_response"] = state.get("error_message") or "فشلت أداة الرحلات."
     elif state.get("terminal_reason") == "REVISION_LIMIT":
@@ -280,10 +303,10 @@ def route_after_research(state: TravelState) -> str:
     return "worker"
 
 
-def route_after_reviewer(state: TravelState) -> str:
+def route_after_reviewer(state: TravelState, max_revisions: int = 2) -> str:
     if state.get("is_approved"):
         return "finalizer"
-    if state.get("revision_count", 0) >= 2:
+    if state.get("revision_count", 0) >= max_revisions:
         state["terminal_reason"] = "REVISION_LIMIT"
         return "finalizer"
     if state.get("terminal_reason") in {"NO_RESULTS", "TOOL_FAILURE"}:
@@ -311,7 +334,7 @@ class AeroMindWorkflow:
         graph.add_conditional_edges("planner", route_after_planner)
         graph.add_conditional_edges("research", route_after_research)
         graph.add_edge("worker", "reviewer")
-        graph.add_conditional_edges("reviewer", route_after_reviewer)
+        graph.add_conditional_edges("reviewer", lambda state: route_after_reviewer(state, self.settings.max_revisions))
         graph.add_edge("finalizer", END)
         return graph.compile()
 

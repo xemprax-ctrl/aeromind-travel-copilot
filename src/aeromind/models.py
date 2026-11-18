@@ -26,6 +26,7 @@ class FlightOption(BaseModel):
     baggage_fee_sar: float
     total_price_sar: float
     stops: int = Field(ge=0)
+    stopover_airport: str | None = None
     duration: str
 
 
@@ -51,6 +52,7 @@ class TravelState(TypedDict, total=False):
     direct_only: bool
     allow_stopovers: bool
     require_stopover: bool
+    research_context: list[dict[str, Any]]
     candidate_flights: list[dict[str, Any]]
     selected_plan: dict[str, Any] | None
     critique_feedback: str

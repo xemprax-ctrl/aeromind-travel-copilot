@@ -6,7 +6,7 @@ A multi-agent travel planning system built with LangGraph, OpenRouter, Tavily, P
 
 AeroMind validates a user's travel request, extracts structured constraints, retrieves supporting travel context, searches mock flight options, reviews the plan against a budget and travel preferences, and produces a safe final response.
 
-The deterministic mock catalog contains 15 airports, 389 bidirectional mock flight records, 8 airlines, direct routes, and region-aware stopovers.
+The deterministic mock catalog contains 15 advertised destinations, bidirectional airport search, 8 airlines, direct routes, and region-aware stopover simulations.
 
 ## Project Structure
 
@@ -99,7 +99,7 @@ python -c "from aeromind.graph.workflow import AeroMindWorkflow; print(AeroMindW
 
 ## Testing
 
-The suite covers normal travel requests, unsupported destinations, prompt injection, PII masking, mock flight pricing, reverse routes, baggage pricing, stopover selection, all destination pairs, and benchmark results. The final local run passes 15 tests.
+The suite covers normal travel requests, unsupported destinations, prompt injection, PII masking, mock flight pricing, reverse routes, baggage pricing, stopover selection, every selectable airport pair, budget handling, tool failure handling, and benchmark results. The final local run passes 19 tests.
 
 ## Requirement Traceability
 
@@ -130,7 +130,7 @@ AeroMind uses LangGraph shared state for agent communication, Streamlit session 
 
 ## Limitations
 
-- Flight prices and availability are mock data and must not be presented as live bookings.
+- Flight prices, stopovers, durations, and availability are mock data and must not be presented as live bookings.
 - Tavily supplies supporting context, not guaranteed live fare data.
 - OpenRouter is optional; deterministic mock behavior remains available.
 - No real payment or airline booking service is included.

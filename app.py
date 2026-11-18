@@ -12,7 +12,7 @@ if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
 from aeromind.graph.workflow import AeroMindWorkflow
-from aeromind.tools.flights import AIRPORT_CODES, DESTINATION_NAMES
+from aeromind.tools.flights import SEARCH_AIRPORT_CODES
 
 
 st.set_page_config(page_title="AeroMind Travel Copilot", page_icon="✈", layout="wide")
@@ -94,10 +94,15 @@ AIRPORT_LABELS = {
     "DMM": "الدمام - Dammam",
 }
 
-search_airports = list(dict.fromkeys(["RUH", "JED", "DMM", "MED", *AIRPORT_CODES]))
+search_airports = list(SEARCH_AIRPORT_CODES)
 controls = st.columns([2, 2, 2, 1.5, 1.5])
 origin_code = controls[0].selectbox("المغادرة", search_airports, format_func=lambda code: AIRPORT_LABELS.get(code, code), index=0)
-destination_code = controls[1].selectbox("الوجهة", AIRPORT_CODES, format_func=lambda code: AIRPORT_LABELS.get(code, code), index=1)
+destination_code = controls[1].selectbox(
+    "الوجهة",
+    SEARCH_AIRPORT_CODES,
+    format_func=lambda code: AIRPORT_LABELS.get(code, code),
+    index=SEARCH_AIRPORT_CODES.index("DXB"),
+)
 budget = controls[2].number_input("الميزانية بالريال", min_value=300, max_value=30000, value=3000, step=100)
 extra_bags = controls[3].number_input("عدد الحقائب", min_value=0, max_value=5, value=0, step=1)
 trip_mode = controls[4].selectbox("نوع الرحلة", ["مباشرة", "مباشرة أو توقف", "أفضل توقف قريب"])
@@ -115,7 +120,9 @@ st.markdown('<div class="simulation-note">الأسعار والرحلات محا
 plan_clicked = st.button("ابحث عن أفضل الخيارات", type="primary")
 
 if plan_clicked:
-    if not query.strip():
+    if origin_code == destination_code:
+        st.error("اختر مطارًا مختلفًا للوجهة عن مطار المغادرة.")
+    elif not query.strip():
         st.warning("اكتب طلب الرحلة أولاً.")
     else:
         with st.spinner("يتم تحليل الطلب وتشغيل الوكلاء..."):
@@ -162,7 +169,9 @@ if plan_clicked:
         summary_cols = st.columns(3)
         summary_cols[0].metric("مرشحات مباشرة", direct_count)
         summary_cols[1].metric("مرشحات بتوقف", stop_count)
-        summary_cols[2].metric("أقرب مطار توقف", candidates[0].get("stopover_airport") if stop_count and candidates else "لا ينطبق")
+        stop_options = [item for item in candidates if item.get("stops", 0) > 0]
+        stop_airport = stop_options[0].get("stopover_airport") if stop_options else "لا ينطبق"
+        summary_cols[2].metric("أقرب مطار توقف", stop_airport)
 
         st.markdown('<div class="section-label">03 / المطابقة</div>', unsafe_allow_html=True)
         st.header("القيود التي تم اعتمادها")
@@ -211,6 +220,8 @@ if plan_clicked:
 
         with st.expander("سجل تنفيذ الوكلاء"):
             st.json(workflow.logger.logs)
+
+        st.session_state.history.append({"query": query, "result": result})
 
 if st.session_state.history:
     st.divider()
